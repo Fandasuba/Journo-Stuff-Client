@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCw, AlertCircle, TrendingUp, FileText, Calendar } from 'lucide-react';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
+const API_URL = process.env.REACT_APP_API_URL || 'https://gaming-news-api.onrender.com/api';
 
 export default function NewsDashboard() {
   const [lawsuits, setLawsuits] = useState([]);
@@ -10,9 +10,6 @@ export default function NewsDashboard() {
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [filter, setFilter] = useState({ priority: 'all', view: 'recent' });
-  const [searchCompany, setSearchCompany] = useState('');
-  const [customDateRange, setCustomDateRange] = useState({ from: '', to: '' });
-  const [scanProgress, setScanProgress] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -56,77 +53,22 @@ export default function NewsDashboard() {
     }
   };
 
-  const calculateHoursBack = (fromDate, toDate) => {
-    const from = new Date(fromDate);
-    const to = new Date(toDate);
-    return Math.floor((to - from) / (1000 * 60 * 60));
-  };
-
   const triggerScan = async () => {
     setScanning(true);
-    setScanProgress('Starting full scan...');
-    
     try {
-      const hoursBack = customDateRange.from && customDateRange.to 
-        ? calculateHoursBack(customDateRange.from, customDateRange.to)
-        : 168;
-      
       const response = await fetch(`${API_URL}/scan/lawsuits`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ hoursBack })
+        body: JSON.stringify({ hoursBack: 168 })
       });
       const data = await response.json();
-      setScanProgress('');
       alert(data.message);
       fetchData();
       fetchStats();
       fetchScanStatus();
     } catch (error) {
       console.error('Scan error:', error);
-      setScanProgress('');
       alert('Scan failed: ' + error.message);
-    }
-    setScanning(false);
-  };
-
-  const searchSpecificCompany = async () => {
-    if (!searchCompany) {
-      alert('Please enter a company ID');
-      return;
-    }
-    
-    setScanning(true);
-    setScanProgress(`Searching for ${searchCompany}...`);
-    
-    try {
-      const hoursBack = customDateRange.from && customDateRange.to
-        ? calculateHoursBack(customDateRange.from, customDateRange.to)
-        : 8760;
-        
-      const response = await fetch(`${API_URL}/scan/company`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          companyId: searchCompany, 
-          hoursBack 
-        })
-      });
-      const data = await response.json();
-      
-      setScanProgress('');
-      if (data.success) {
-        alert(`${data.message}\n\nFound ${data.data.found} cases for ${data.data.company}`);
-        fetchData();
-        fetchStats();
-        setSearchCompany('');
-      } else {
-        alert('Error: ' + data.error);
-      }
-    } catch (error) {
-      console.error('Search error:', error);
-      setScanProgress('');
-      alert('Search failed: ' + error.message);
     }
     setScanning(false);
   };
@@ -149,9 +91,28 @@ export default function NewsDashboard() {
     });
   };
 
+  const flushDatabase = async () => {
+  if (!window.confirm('Are you sure? This will delete ALL lawsuits from the database.')) {
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${API_URL}/lawsuits/flush`, {
+      method: 'DELETE'
+    });
+    const data = await response.json();
+    alert(data.message);
+    fetchData();
+    fetchStats();
+  } catch (error) {
+    alert('Flush failed: ' + error.message);
+  }
+};
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
+        {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">
             Gaming News Intelligence Dashboard
@@ -161,6 +122,7 @@ export default function NewsDashboard() {
           </p>
         </div>
 
+        {/* Stats Cards */}
         {stats && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <div className="bg-white p-6 rounded-lg shadow">
@@ -202,125 +164,60 @@ export default function NewsDashboard() {
           </div>
         )}
 
-        <div className="bg-white p-4 rounded-lg shadow mb-6">
-          <div className="mb-4 pb-4 border-b">
-            <label className="text-sm font-medium text-gray-700 mb-2 block">
-              Custom Date Range (optional)
-            </label>
-            <div className="flex gap-4 items-center flex-wrap">
-              <div>
-                <label className="text-xs text-gray-600">From:</label>
-                <input
-                  type="date"
-                  value={customDateRange.from}
-                  onChange={(e) => setCustomDateRange({...customDateRange, from: e.target.value})}
-                  className="border border-gray-300 rounded px-3 py-2 ml-2"
-                  disabled={scanning}
-                />
-              </div>
-              <div>
-                <label className="text-xs text-gray-600">To:</label>
-                <input
-                  type="date"
-                  value={customDateRange.to}
-                  onChange={(e) => setCustomDateRange({...customDateRange, to: e.target.value})}
-                  className="border border-gray-300 rounded px-3 py-2 ml-2"
-                  disabled={scanning}
-                />
-              </div>
-              <button
-                onClick={() => setCustomDateRange({from: '', to: ''})}
-                className="text-sm text-blue-600 hover:text-blue-800"
-                disabled={scanning}
+        {/* Controls */}
+        <div className="bg-white p-4 rounded-lg shadow mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex gap-4 items-center">
+            <div>
+              <label className="text-sm text-gray-600 mr-2">Priority:</label>
+              <select
+                value={filter.priority}
+                onChange={(e) => setFilter({ ...filter, priority: e.target.value })}
+                className="border border-gray-300 rounded px-3 py-2"
               >
-                Clear Dates
-              </button>
+                <option value="all">All</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
             </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Leave empty to use default range (7 days for full scan, 1 year for company search)
-            </p>
-          </div>
-
-          {scanProgress && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
-              <div className="flex items-center gap-2">
-                <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
-                <span className="text-sm text-blue-800">{scanProgress}</span>
-              </div>
-            </div>
-          )}
-
-          <div className="flex flex-wrap gap-4 mb-4">
-            <div className="flex gap-4 items-center flex-1">
-              <div>
-                <label className="text-sm text-gray-600 mr-2">Priority:</label>
-                <select
-                  value={filter.priority}
-                  onChange={(e) => setFilter({ ...filter, priority: e.target.value })}
-                  className="border border-gray-300 rounded px-3 py-2"
-                >
-                  <option value="all">All</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
-                </select>
-              </div>
-              <div>
-                <label className="text-sm text-gray-600 mr-2">View:</label>
-                <select
-                  value={filter.view}
-                  onChange={(e) => setFilter({ ...filter, view: e.target.value })}
-                  className="border border-gray-300 rounded px-3 py-2"
-                >
-                  <option value="recent">Recent (7 days)</option>
-                  <option value="all">All Cases</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex gap-2 items-center">
-              {lastScan && (
-                <span className="text-sm text-gray-600">
-                  Last scan: {formatDate(lastScan)}
-                </span>
-              )}
-              <button
-                onClick={triggerScan}
-                disabled={scanning}
-                className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
+            <div>
+              <label className="text-sm text-gray-600 mr-2">View:</label>
+              <select
+                value={filter.view}
+                onChange={(e) => setFilter({ ...filter, view: e.target.value })}
+                className="border border-gray-300 rounded px-3 py-2"
               >
-                <RefreshCw className={`w-4 h-4 ${scanning ? 'animate-spin' : ''}`} />
-                {scanning ? 'Scanning...' : 'Run Full Scan'}
+                <option value="recent">Recent (7 days)</option>
+                <option value="all">All Cases</option>
+              </select>
+            </div>
+            <div>
+              <button
+                onClick={flushDatabase}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+              >
+                Clear All Data
               </button>
             </div>
           </div>
-          
-          <div className="border-t pt-4">
-            <label className="text-sm font-medium text-gray-700 mb-2 block">
-              Search Specific Company
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={searchCompany}
-                onChange={(e) => setSearchCompany(e.target.value)}
-                placeholder="Enter company ID (e.g., 'epic-games', 'riot-games')"
-                className="flex-1 border border-gray-300 rounded px-3 py-2"
-                disabled={scanning}
-              />
-              <button
-                onClick={searchSpecificCompany}
-                disabled={scanning || !searchCompany}
-                className="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 disabled:bg-gray-400"
-              >
-                Search Company
-              </button>
-            </div>
-            <p className="text-xs text-gray-500 mt-1">
-              Common IDs: epic-games, riot-games, activision-blizzard, ea, valve, nintendo, ubisoft, sony-interactive
-            </p>
+          <div className="flex gap-2 items-center">
+            {lastScan && (
+              <span className="text-sm text-gray-600">
+                Last scan: {formatDate(lastScan)}
+              </span>
+            )}
+            <button
+              onClick={triggerScan}
+              disabled={scanning}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:bg-gray-400"
+            >
+              <RefreshCw className={`w-4 h-4 ${scanning ? 'animate-spin' : ''}`} />
+              {scanning ? 'Scanning...' : 'Run Scan'}
+            </button>
           </div>
         </div>
 
+        {/* Lawsuits List */}
         <div className="bg-white rounded-lg shadow">
           <div className="p-4 border-b border-gray-200">
             <h2 className="text-xl font-semibold text-gray-900">
@@ -386,6 +283,7 @@ export default function NewsDashboard() {
           )}
         </div>
 
+        {/* Footer */}
         <div className="mt-8 text-center text-sm text-gray-500">
           <p>Data sources: CourtListener API</p>
           <p className="mt-1">More scanners coming soon: Trademarks, Job Postings, SEC Filings</p>
