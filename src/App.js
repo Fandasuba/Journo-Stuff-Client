@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { RefreshCw, AlertCircle, TrendingUp, FileText, Calendar } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { RefreshCw, AlertCircle, TrendingUp, FileText, Calendar, CheckCircle } from 'lucide-react';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001/api';
+const API_URL = 'http://localhost:3001/api';
 
 export default function NewsDashboard() {
   const [lawsuits, setLawsuits] = useState([]);
@@ -12,12 +12,32 @@ export default function NewsDashboard() {
   const [filter, setFilter] = useState({ priority: 'all', view: 'recent' });
   const [searchCompany, setSearchCompany] = useState('');
   const [customDateRange, setCustomDateRange] = useState({ from: '', to: '' });
-  const [scanProgress, setScanProgress] = useState('');
+  
+  // SSE-specific state
+  const [scanProgress, setScanProgress] = useState({
+    status: '',
+    currentCompany: '',
+    companyId: '',
+    progress: 0,
+    total: 0,
+    percentage: 0,
+    casesFound: 0,
+    message: ''
+  });
+  
+  const eventSourceRef = useRef(null);
 
   useEffect(() => {
     fetchData();
     fetchStats();
     fetchScanStatus();
+    
+    // Cleanup on unmount
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+    };
   }, [filter]);
 
   const fetchData = async () => {
@@ -64,30 +84,125 @@ export default function NewsDashboard() {
 
   const triggerScan = async () => {
     setScanning(true);
-    setScanProgress('Starting full scan...');
+    setScanProgress({
+      status: 'initializing',
+      currentCompany: '',
+      companyId: '',
+      progress: 0,
+      total: 0,
+      percentage: 0,
+      casesFound: 0,
+      message: 'Initializing scan...'
+    });
     
     try {
       const hoursBack = customDateRange.from && customDateRange.to 
         ? calculateHoursBack(customDateRange.from, customDateRange.to)
         : 168;
       
-      const response = await fetch(`${API_URL}/scan/lawsuits`, {
+      const response = await fetch(`${API_URL}/scan/lawsuits-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ hoursBack })
       });
-      const data = await response.json();
-      setScanProgress('');
-      alert(data.message);
-      fetchData();
-      fetchStats();
-      fetchScanStatus();
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = JSON.parse(line.slice(6));
+            
+            if (data.status === 'started') {
+              setScanProgress({
+                status: 'started',
+                message: data.message,
+                total: data.total,
+                progress: 0,
+                percentage: 0,
+                currentCompany: '',
+                companyId: '',
+                casesFound: 0
+              });
+            } else if (data.status === 'searching') {
+              setScanProgress(prev => ({
+                ...prev,
+                status: 'searching',
+                currentCompany: data.company,
+                companyId: data.companyId,
+                progress: data.progress,
+                total: data.total,
+                percentage: data.percentage,
+                message: `Searching ${data.company}... (${data.progress}/${data.total})`
+              }));
+            } else if (data.status === 'company-complete') {
+              setScanProgress(prev => ({
+                ...prev,
+                status: 'company-complete',
+                casesFound: prev.casesFound + data.casesFound,
+                message: `✓ ${data.company}: ${data.casesFound} cases found`
+              }));
+            } else if (data.status === 'saving') {
+              setScanProgress(prev => ({
+                ...prev,
+                status: 'saving',
+                message: data.message
+              }));
+            } else if (data.status === 'complete') {
+              setScanProgress({
+                status: 'complete',
+                message: data.message,
+                currentCompany: '',
+                companyId: '',
+                progress: 0,
+                total: 0,
+                percentage: 100,
+                casesFound: data.found
+              });
+              
+              setTimeout(() => {
+                fetchData();
+                fetchStats();
+                fetchScanStatus();
+                setScanning(false);
+              }, 2000);
+            } else if (data.status === 'error') {
+              setScanProgress({
+                status: 'error',
+                message: `Error: ${data.message}`,
+                currentCompany: '',
+                companyId: '',
+                progress: 0,
+                total: 0,
+                percentage: 0,
+                casesFound: 0
+              });
+              setScanning(false);
+            }
+          }
+        }
+      }
     } catch (error) {
       console.error('Scan error:', error);
-      setScanProgress('');
-      alert('Scan failed: ' + error.message);
+      setScanProgress({
+        status: 'error',
+        message: 'Scan failed: ' + error.message,
+        currentCompany: '',
+        companyId: '',
+        progress: 0,
+        total: 0,
+        percentage: 0,
+        casesFound: 0
+      });
+      setScanning(false);
     }
-    setScanning(false);
   };
 
   const searchSpecificCompany = async () => {
@@ -97,14 +212,23 @@ export default function NewsDashboard() {
     }
     
     setScanning(true);
-    setScanProgress(`Searching for ${searchCompany}...`);
+    setScanProgress({
+      status: 'initializing',
+      currentCompany: searchCompany,
+      companyId: searchCompany,
+      progress: 0,
+      total: 0,
+      percentage: 0,
+      casesFound: 0,
+      message: `Initializing search for ${searchCompany}...`
+    });
     
     try {
       const hoursBack = customDateRange.from && customDateRange.to
         ? calculateHoursBack(customDateRange.from, customDateRange.to)
         : 8760;
         
-      const response = await fetch(`${API_URL}/scan/company`, {
+      const response = await fetch(`${API_URL}/scan/company-stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
@@ -112,23 +236,99 @@ export default function NewsDashboard() {
           hoursBack 
         })
       });
-      const data = await response.json();
-      
-      setScanProgress('');
-      if (data.success) {
-        alert(`${data.message}\n\nFound ${data.data.found} cases for ${data.data.company}`);
-        fetchData();
-        fetchStats();
-        setSearchCompany('');
-      } else {
-        alert('Error: ' + data.error);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = JSON.parse(line.slice(6));
+            
+            if (data.status === 'started') {
+              setScanProgress({
+                status: 'started',
+                currentCompany: data.company,
+                companyId: searchCompany,
+                message: data.message,
+                progress: 0,
+                total: 0,
+                percentage: 0,
+                casesFound: 0
+              });
+            } else if (data.status === 'searching') {
+              setScanProgress(prev => ({
+                ...prev,
+                status: 'searching',
+                message: `Searching: ${data.searchTerm} (${data.progress}/${data.total})`
+              }));
+            } else if (data.status === 'found') {
+              setScanProgress(prev => ({
+                ...prev,
+                status: 'found',
+                casesFound: prev.casesFound + data.casesFound,
+                message: `✓ Found ${data.casesFound} cases for ${data.searchTerm}`
+              }));
+            } else if (data.status === 'saving') {
+              setScanProgress(prev => ({
+                ...prev,
+                status: 'saving',
+                message: data.message
+              }));
+            } else if (data.status === 'complete') {
+              setScanProgress({
+                status: 'complete',
+                currentCompany: data.company,
+                companyId: searchCompany,
+                message: data.message,
+                progress: 0,
+                total: 0,
+                percentage: 100,
+                casesFound: data.found
+              });
+              
+              setTimeout(() => {
+                fetchData();
+                fetchStats();
+                setSearchCompany('');
+                setScanning(false);
+              }, 2000);
+            } else if (data.status === 'error') {
+              setScanProgress({
+                status: 'error',
+                message: `Error: ${data.message}`,
+                currentCompany: '',
+                companyId: '',
+                progress: 0,
+                total: 0,
+                percentage: 0,
+                casesFound: 0
+              });
+              setScanning(false);
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('Search error:', error);
-      setScanProgress('');
-      alert('Search failed: ' + error.message);
+      setScanProgress({
+        status: 'error',
+        message: 'Search failed: ' + error.message,
+        currentCompany: '',
+        companyId: '',
+        progress: 0,
+        total: 0,
+        percentage: 0,
+        casesFound: 0
+      });
+      setScanning(false);
     }
-    setScanning(false);
   };
 
   const getPriorityColor = (priority) => {
@@ -241,11 +441,56 @@ export default function NewsDashboard() {
             </p>
           </div>
 
-          {scanProgress && (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded">
-              <div className="flex items-center gap-2">
-                <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />
-                <span className="text-sm text-blue-800">{scanProgress}</span>
+          {scanProgress.status && scanProgress.status !== 'complete' && (
+            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-start gap-3">
+                {scanProgress.status === 'error' ? (
+                  <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+                ) : scanProgress.status === 'complete' ? (
+                  <CheckCircle className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                ) : (
+                  <RefreshCw className="w-5 h-5 animate-spin text-blue-600 mt-0.5 flex-shrink-0" />
+                )}
+                <div className="flex-1">
+                  {scanProgress.currentCompany && (
+                    <div className="font-semibold text-blue-900 mb-1">
+                      {scanProgress.currentCompany}
+                    </div>
+                  )}
+                  <div className="text-sm text-blue-800 mb-2">
+                    {scanProgress.message}
+                  </div>
+                  {scanProgress.total > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex justify-between text-xs text-blue-700">
+                        <span>Progress: {scanProgress.progress} / {scanProgress.total}</span>
+                        <span>{scanProgress.percentage}%</span>
+                      </div>
+                      <div className="w-full bg-blue-200 rounded-full h-2">
+                        <div
+                          className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${scanProgress.percentage}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {scanProgress.casesFound > 0 && (
+                    <div className="text-xs text-blue-700 mt-2">
+                      Total cases found so far: {scanProgress.casesFound}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {scanProgress.status === 'complete' && (
+            <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+              <div className="flex items-center gap-3">
+                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                <div className="text-sm text-green-800">
+                  {scanProgress.message}
+                </div>
               </div>
             </div>
           )}
