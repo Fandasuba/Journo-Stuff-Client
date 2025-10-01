@@ -50,19 +50,19 @@ export default function NewsDashboard() {
     });
 
     newSocket.on('scan:complete', (data) => {
-      console.log('Scan complete:', data);
-      setScanning(false);
-      setScanProgress({
-        message: '',
-        currentCompany: 0,
-        totalCompanies: 0,
-        companyName: ''
-      });
-      alert(data.message);
-      fetchData();
-      fetchStats();
-      fetchScanStatus();
-    });
+  console.log('Scan complete:', data);
+  setScanning(false);
+  setScanProgress({
+    message: '',
+    currentCompany: 0,
+    totalCompanies: 0,
+    companyName: ''
+  });
+  alert(`Scan Complete!\n\nFound: ${data.found} cases\nSaved: ${data.saved} cases`);
+  fetchData();
+  fetchStats();
+  fetchScanStatus();
+});
 
     newSocket.on('scan:error', (data) => {
       console.error('Scan error:', data);
