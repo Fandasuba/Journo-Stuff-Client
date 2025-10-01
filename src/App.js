@@ -91,6 +91,24 @@ export default function NewsDashboard() {
     });
   };
 
+  const flushDatabase = async () => {
+  if (!window.confirm('Are you sure? This will delete ALL lawsuits from the database.')) {
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${API_URL}/lawsuits/flush`, {
+      method: 'DELETE'
+    });
+    const data = await response.json();
+    alert(data.message);
+    fetchData();
+    fetchStats();
+  } catch (error) {
+    alert('Flush failed: ' + error.message);
+  }
+};
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -172,6 +190,14 @@ export default function NewsDashboard() {
                 <option value="recent">Recent (7 days)</option>
                 <option value="all">All Cases</option>
               </select>
+            </div>
+            <div>
+              <button
+                onClick={flushDatabase}
+                className="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700"
+              >
+                Clear All Data
+              </button>
             </div>
           </div>
           <div className="flex gap-2 items-center">
