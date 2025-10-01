@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { RefreshCw, AlertCircle, TrendingUp, FileText, Calendar } from 'lucide-react';
+import io from 'socket.io-client';
 
 const API_URL = process.env.REACT_APP_API_URL || 'https://gaming-news-api.onrender.com/api';
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL || 'https://gaming-news-api.onrender.com';
 
 export default function NewsDashboard() {
   const [lawsuits, setLawsuits] = useState([]);
@@ -10,6 +12,68 @@ export default function NewsDashboard() {
   const [loading, setLoading] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [filter, setFilter] = useState({ priority: 'all', view: 'recent' });
+  
+  // NEW: Socket and progress states
+  const [socket, setSocket] = useState(null);
+  const [scanProgress, setScanProgress] = useState({
+    message: '',
+    currentCompany: 0,
+    totalCompanies: 0,
+    companyName: ''
+  });
+
+  // Initialize socket connection
+  useEffect(() => {
+    const newSocket = io(SOCKET_URL);
+    setSocket(newSocket);
+
+    // Listen for scan events
+    newSocket.on('scan:start', (data) => {
+      console.log('Scan started:', data);
+      setScanning(true);
+      setScanProgress({
+        message: data.message,
+        currentCompany: 0,
+        totalCompanies: data.totalCompanies,
+        companyName: ''
+      });
+    });
+
+    newSocket.on('scan:progress', (data) => {
+      console.log('Scan progress:', data);
+      setScanProgress({
+        message: data.message,
+        currentCompany: data.currentCompany,
+        totalCompanies: data.totalCompanies,
+        companyName: data.companyName
+      });
+    });
+
+    newSocket.on('scan:complete', (data) => {
+      console.log('Scan complete:', data);
+      setScanning(false);
+      setScanProgress({
+        message: '',
+        currentCompany: 0,
+        totalCompanies: 0,
+        companyName: ''
+      });
+      alert(data.message);
+      fetchData();
+      fetchStats();
+      fetchScanStatus();
+    });
+
+    newSocket.on('scan:error', (data) => {
+      console.error('Scan error:', data);
+      setScanning(false);
+      alert('Scan failed: ' + data.message);
+    });
+
+    return () => {
+      newSocket.close();
+    };
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -62,15 +126,12 @@ export default function NewsDashboard() {
         body: JSON.stringify({ hoursBack: 168 })
       });
       const data = await response.json();
-      alert(data.message);
-      fetchData();
-      fetchStats();
-      fetchScanStatus();
+      // Don't need to handle response here - socket will handle it
     } catch (error) {
       console.error('Scan error:', error);
       alert('Scan failed: ' + error.message);
+      setScanning(false);
     }
-    setScanning(false);
   };
 
   const getPriorityColor = (priority) => {
@@ -216,6 +277,35 @@ export default function NewsDashboard() {
             </button>
           </div>
         </div>
+
+        {/* Optimistic rendering for diplaying loading */}
+        {scanning && scanProgress.totalCompanies > 0 && (
+          <div className="bg-white p-4 rounded-lg shadow mb-6">
+            <div className="flex items-center justify-between mb-2">
+              <div>
+                <span className="text-sm font-medium text-gray-700">
+                  {scanProgress.message}
+                </span>
+                {scanProgress.companyName && (
+                  <div className="text-lg font-bold text-blue-600 mt-1">
+                    {scanProgress.companyName}
+                  </div>
+                )}
+              </div>
+              <span className="text-sm text-gray-600">
+                {scanProgress.currentCompany} / {scanProgress.totalCompanies}
+              </span>
+            </div>
+            <div className="w-full bg-gray-200 rounded-full h-2.5">
+              <div
+                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
+                style={{
+                  width: `${(scanProgress.currentCompany / scanProgress.totalCompanies) * 100}%`
+                }}
+              ></div>
+            </div>
+          </div>
+        )}
 
         {/* Lawsuits List */}
         <div className="bg-white rounded-lg shadow">
